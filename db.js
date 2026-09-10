@@ -2,8 +2,20 @@
 const low = require('lowdb');
 const FileSync = require('lowdb/adapters/FileSync');
 const path = require('path');
+const fs = require('fs');
 
-const adapter = new FileSync(path.join(__dirname, 'data', 'db.json'));
+const dataDir = path.join(__dirname, 'data');
+const dbPath = path.join(dataDir, 'db.json');
+
+// data 폴더나 db.json 파일이 없으면(예: 새 서버/컨테이너 최초 실행) 미리 만들어둔다.
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+if (!fs.existsSync(dbPath)) {
+  fs.writeFileSync(dbPath, JSON.stringify({ watches: [], favorites: [], chats: [], logs: [] }, null, 2));
+}
+
+const adapter = new FileSync(dbPath);
 const db = low(adapter);
 
 db.defaults({
