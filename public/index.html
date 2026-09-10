@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KTX 취소표 알림</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+         background:#0f172a; color:#e2e8f0; margin:0; padding:16px; }
+  h1 { font-size:20px; margin-bottom:4px; }
+  p.desc { color:#94a3b8; font-size:13px; margin-top:0; }
+  .card { background:#1e293b; border-radius:12px; padding:16px; margin-bottom:16px; }
+  label { display:block; font-size:13px; margin:8px 0 4px; color:#cbd5e1; }
+  input, select { width:100%; padding:10px; border-radius:8px; border:1px solid #334155;
+                  background:#0f172a; color:#fff; font-size:15px; }
+  button { margin-top:12px; width:100%; padding:12px; border:none; border-radius:8px;
+           background:#38bdf8; color:#0f172a; font-weight:700; font-size:15px; cursor:pointer; }
+  button.secondary { background:#334155; color:#e2e8f0; }
+  button.danger { background:#ef4444; color:#fff; }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; }
+  .fav-chip { display:inline-block; background:#334155; padding:6px 10px; border-radius:20px;
+              font-size:13px; margin:4px 4px 0 0; cursor:pointer; }
+  .watch-item, .log-item { border-bottom:1px solid #334155; padding:10px 0; font-size:14px; }
+  .watch-item:last-child, .log-item:last-child { border-bottom:none; }
+  .status-ok { color:#4ade80; }
+  .badge { background:#0f172a; border-radius:6px; padding:2px 6px; font-size:11px; color:#94a3b8; }
+  #app { display:none; }
+  #link-error { color:#f87171; font-size:13px; margin-top:6px; display:none; }
+</style>
+</head>
+<body>
+  <h1>🚄 KTX 취소표 알림</h1>
+  <p class="desc">등록한 구간에 취소표가 뜨면 텔레그램으로 나에게만 알려드립니다.</p>
+
+  <!-- 최초 1회: 텔레그램 연결 코드 입력 화면 -->
+  <div id="link-card" class="card">
+    <strong>🔗 텔레그램 연결</strong>
+    <p class="desc">
+      1) 텔레그램에서 봇을 찾아 <b>/start</b> 입력<br>
+      2) 봇이 알려준 <b>6자리 코드</b>를 아래에 입력<br>
+      → 이후로는 이 기기에서 자동으로 로그인 상태가 유지됩니다.
+    </p>
+    <input id="link-code" placeholder="6자리 코드 입력" maxlength="6" />
+    <button onclick="linkAccount()">연결하기</button>
+    <div id="link-error"></div>
+  </div>
+
+  <!-- 연결 완료 후 보이는 메인 화면 -->
+  <div id="app">
+    <div class="card">
+      <strong>✅ 연결됨</strong> <span class="badge" id="my-id"></span>
+      <button class="secondary" onclick="unlinkAccount()" style="margin-top:10px;">다른 텔레그램 계정으로 변경</button>
+    </div>
+
+    <div class="card">
+      <strong>1️⃣ 자주 쓰는 구간</strong>
+      <div id="favorites"></div>
+      <div class="row" style="margin-top:10px;">
+        <input id="fav-from" placeholder="출발역 (예: 구미)" />
+        <input id="fav-to" placeholder="도착역 (예: 서울)" />
+      </div>
+      <button class="secondary" onclick="addFavorite()">즐겨찾기 추가</button>
+    </div>
+
+    <div class="card">
+      <strong>2️⃣ 새 감시 등록</strong>
+      <label>출발역</label>
+      <input id="w-from" placeholder="예: 구미" />
+      <label>도착역</label>
+      <input id="w-to" placeholder="예: 서울" />
+      <label>날짜</label>
+      <input id="w-date" type="date" />
+      <div class="row">
+        <div>
+          <label>출발 시간(부터)</label>
+          <input id="w-timeFrom" type="time" value="00:00" />
+        </div>
+        <div>
+          <label>출발 시간(까지)</label>
+          <input id="w-timeTo" type="time" value="23:59" />
+        </div>
+      </div>
+      <label>좌석 종류</label>
+      <select id="w-seatType">
+        <option>일반실</option>
+        <option>특실</option>
+      </select>
+      <button onclick="addWatch()">이 조건으로 감시 시작</button>
+    </div>
+
+    <div class="card">
+      <strong>📡 내가 감시 중인 구간</strong>
+      <div id="watches"></div>
+    </div>
+
+    <div class="card">
+      <strong>🔔 내 알림 이력</strong>
+      <div id="logs"></div>
+    </div>
+  </div>
+
+<script>
+const STORAGE_KEY = 'ktx_alert_user_id';
+
+function getUserId() {
+  return localStorage.getItem(STORAGE_KEY);
+}
+
+async function api(path, opts = {}) {
+  const userId = getUserId();
+  const res = await fetch(path, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(userId ? { 'x-user-id': userId } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  if (res.status === 401) {
+    // 저장된 사용자ID가 유효하지 않으면 다시 연결 화면으로
+    localStorage.removeItem(STORAGE_KEY);
+    showLinkScreen();
+    throw new Error('인증 필요');
+  }
+  return res.json();
+}
+
+async function linkAccount() {
+  const code = document.getElementById('link-code').value.trim();
+  const errEl = document.getElementById('link-error');
+  errEl.style.display = 'none';
+  if (!code) return;
+  try {
+    const res = await fetch('/api/link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errEl.textContent = data.error || '연결에 실패했습니다.';
+      errEl.style.display = 'block';
+      return;
+    }
+    localStorage.setItem(STORAGE_KEY, data.userId);
+    showAppScreen();
+  } catch (e) {
+    errEl.textContent = '연결 중 오류가 발생했습니다.';
+    errEl.style.display = 'block';
+  }
+}
+
+function unlinkAccount() {
+  if (!confirm('연결을 해제하고 다른 텔레그램 계정으로 전환할까요?')) return;
+  localStorage.removeItem(STORAGE_KEY);
+  showLinkScreen();
+}
+
+function showLinkScreen() {
+  document.getElementById('link-card').style.display = 'block';
+  document.getElementById('app').style.display = 'none';
+}
+
+function showAppScreen() {
+  document.getElementById('link-card').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('my-id').textContent = 'chat_id: ' + getUserId();
+  loadFavorites();
+  loadWatches();
+  loadLogs();
+}
+
+async function loadFavorites() {
+  const favs = await api('/api/favorites');
+  const el = document.getElementById('favorites');
+  el.innerHTML = favs.length === 0 ? '<span class="desc">등록된 즐겨찾기가 없습니다.</span>' :
+    favs.map(f => `<span class="fav-chip" onclick="useFavorite('${f.from}','${f.to}')">${f.name} ✕
+      <a href="#" onclick="event.stopPropagation(); deleteFavorite('${f.id}')" style="color:#f87171;">삭제</a></span>`).join('');
+}
+
+function useFavorite(from, to) {
+  document.getElementById('w-from').value = from;
+  document.getElementById('w-to').value = to;
+}
+
+async function addFavorite() {
+  const from = document.getElementById('fav-from').value.trim();
+  const to = document.getElementById('fav-to').value.trim();
+  if (!from || !to) return alert('출발역/도착역을 입력하세요.');
+  await api('/api/favorites', { method: 'POST', body: JSON.stringify({ from, to }) });
+  document.getElementById('fav-from').value = '';
+  document.getElementById('fav-to').value = '';
+  loadFavorites();
+}
+
+async function deleteFavorite(id) {
+  await api('/api/favorites/' + id, { method: 'DELETE' });
+  loadFavorites();
+}
+
+async function addWatch() {
+  const body = {
+    from: document.getElementById('w-from').value.trim(),
+    to: document.getElementById('w-to').value.trim(),
+    date: document.getElementById('w-date').value,
+    timeFrom: document.getElementById('w-timeFrom').value,
+    timeTo: document.getElementById('w-timeTo').value,
+    seatType: document.getElementById('w-seatType').value,
+  };
+  if (!body.from || !body.to || !body.date) return alert('출발역/도착역/날짜는 필수입니다.');
+  await api('/api/watches', { method: 'POST', body: JSON.stringify(body) });
+  loadWatches();
+}
+
+async function deleteWatch(id) {
+  await api('/api/watches/' + id, { method: 'DELETE' });
+  loadWatches();
+}
+
+async function loadWatches() {
+  const watches = await api('/api/watches');
+  const el = document.getElementById('watches');
+  el.innerHTML = watches.length === 0 ? '<span class="desc">감시 중인 구간이 없습니다.</span>' :
+    watches.map(w => `
+      <div class="watch-item">
+        <b>${w.from} → ${w.to}</b> (${w.date}, ${w.timeFrom}~${w.timeTo}, ${w.seatType})
+        <span class="badge">${w.active ? '감시중' : '중지됨'}</span>
+        <div>
+          <button class="secondary" style="width:auto;padding:4px 10px;font-size:12px;"
+            onclick="deleteWatch('${w.id}')">삭제</button>
+        </div>
+      </div>`).join('');
+}
+
+async function loadLogs() {
+  const logs = await api('/api/logs');
+  const el = document.getElementById('logs');
+  el.innerHTML = logs.length === 0 ? '<span class="desc">아직 알림 이력이 없습니다.</span>' :
+    logs.slice().reverse().map(l => `<div class="log-item">${new Date(l.time).toLocaleString('ko-KR')}<br>${l.text.replace(/\n/g,'<br>')}</div>`).join('');
+}
+
+// ---------- 초기 진입 ----------
+if (getUserId()) {
+  showAppScreen();
+} else {
+  showLinkScreen();
+}
+
+setInterval(() => {
+  if (getUserId()) { loadWatches(); loadLogs(); }
+}, 15000);
+</script>
+</body>
+</html>

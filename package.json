@@ -1,0 +1,21 @@
+{
+  "name": "ktx-alert",
+  "version": "1.0.0",
+  "description": "KTX 취소표 발생 시 텔레그램으로 알림을 보내는 감시 서버",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-telegram-bot-api": "^0.66.0",
+    "node-cron": "^3.0.3",
+    "lowdb": "^1.0.0",
+    "playwright": "^1.47.0",
+    "dotenv": "^16.4.5",
+    "uuid": "^9.0.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
