@@ -120,6 +120,7 @@ async function runCheckCycle() {
   isChecking = true;
 
   const watches = db.get('watches').filter({ active: true }).value();
+  console.log(`[감시 주기 실행] 현재 활성 감시 ${watches.length}건`);
 
   for (const watch of watches) {
     try {

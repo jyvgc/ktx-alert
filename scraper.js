@@ -4,8 +4,8 @@
 // 코레일 홈페이지는 리뉴얼이 잦아서 화면의 HTML 구조(선택자)가 바뀔 수 있습니다.
 // 아래 SELECTORS 부분은 "이 자리를 코드에서 어떻게 찾는지"를 정의하는 곳인데,
 // 지금 이 값이 실제 배포 시점의 코레일 화면과 다를 수 있습니다.
-// => 만약 조회가 안 되면, 크롬 개발자도구(F12)로 검색 결과 페이지를 열어
-//    아래 SELECTORS 값을 실제 화면에 맞게 한 번만 수정해주면 됩니다. (README 참고)
+// => 조회가 안 되면, 아래 디버그 로그(각 단계 진행상황)를 보고 어느 단계에서
+//    막히는지 확인한 뒤 SELECTORS 값을 실제 화면에 맞게 수정하면 됩니다.
 
 const { chromium } = require('playwright');
 
@@ -29,6 +29,9 @@ const SELECTORS = {
  * @returns {Promise<Array<{trainNo:string, depTime:string, status:string, raw:string}>>}
  */
 async function checkAvailability(condition) {
+  const tag = `[${condition.from}->${condition.to} ${condition.date}]`;
+  console.log(`${tag} 조회 시작...`);
+
   const browser = await chromium.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox'],
@@ -37,23 +40,39 @@ async function checkAvailability(condition) {
   try {
     const page = await browser.newPage({ locale: 'ko-KR' });
     await page.goto(BASE_URL, { waitUntil: 'networkidle', timeout: 30000 });
+    console.log(`${tag} 페이지 로딩 완료. 현재 URL: ${page.url()}`);
 
-    // 출발역/도착역/날짜 입력 (사이트 UI에 맞춰 자동완성 클릭이 필요할 수 있음)
-    await page.fill(SELECTORS.departureInput, condition.from).catch(() => {});
-    await page.fill(SELECTORS.arrivalInput, condition.to).catch(() => {});
-    await page.fill(SELECTORS.dateInput, condition.date).catch(() => {});
+    const depFilled = await page.fill(SELECTORS.departureInput, condition.from).then(() => true).catch((e) => {
+      console.log(`${tag} ⚠️ 출발역 입력창을 찾지 못함:`, e.message);
+      return false;
+    });
+    const arrFilled = await page.fill(SELECTORS.arrivalInput, condition.to).then(() => true).catch((e) => {
+      console.log(`${tag} ⚠️ 도착역 입력창을 찾지 못함:`, e.message);
+      return false;
+    });
+    const dateFilled = await page.fill(SELECTORS.dateInput, condition.date).then(() => true).catch((e) => {
+      console.log(`${tag} ⚠️ 날짜 입력창을 찾지 못함:`, e.message);
+      return false;
+    });
+    console.log(`${tag} 입력 결과 - 출발:${depFilled} 도착:${arrFilled} 날짜:${dateFilled}`);
 
-    await page.click(SELECTORS.searchButton, { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(2000); // 결과 렌더링 대기
+    const clicked = await page.click(SELECTORS.searchButton, { timeout: 15000 }).then(() => true).catch((e) => {
+      console.log(`${tag} ⚠️ 조회 버튼을 찾지 못함:`, e.message);
+      return false;
+    });
+    console.log(`${tag} 조회 버튼 클릭 성공: ${clicked}`);
+
+    await page.waitForTimeout(3000); // 결과 렌더링 대기
 
     const rows = await page.$$(SELECTORS.resultRows);
+    console.log(`${tag} 결과 행(row) 개수: ${rows.length}`);
+
     const results = [];
 
     for (const row of rows) {
       const raw = (await row.innerText()).trim();
       if (!raw) continue;
 
-      // 시간대 필터 (예: 09:00 ~ 12:00 사이 출발 열차만 관심)
       const timeMatch = raw.match(/(\d{2}:\d{2})/);
       const depTime = timeMatch ? timeMatch[1] : null;
       if (condition.timeFrom && depTime && depTime < condition.timeFrom) continue;
@@ -74,9 +93,16 @@ async function checkAvailability(condition) {
       });
     }
 
+    console.log(`${tag} 파싱된 열차 ${results.length}건 (available: ${results.filter(r => r.status === 'available').length}건)`);
+    if (rows.length === 0) {
+      // 결과 행을 하나도 못 찾았다면 화면 구조가 안 맞는 것 -> 디버깅용으로 본문 일부 출력
+      const bodyText = await page.innerText('body').catch(() => '');
+      console.log(`${tag} 📄 페이지 본문 일부(디버그용, 300자):`, bodyText.slice(0, 300).replace(/\n/g, ' '));
+    }
+
     return results;
   } catch (err) {
-    console.error(`[조회 실패] ${condition.from}->${condition.to} ${condition.date}:`, err.message);
+    console.error(`${tag} ❌ 조회 실패:`, err.message);
     return [];
   } finally {
     await browser.close();

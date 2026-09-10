@@ -1,0 +1,18 @@
+# Render 무료 Disk를 사용해 재배포/재시작해도 감시 구간·즐겨찾기·텔레그램 연결 정보가
+# 사라지지 않도록 설정합니다. (Render 대시보드에서 New + → Blueprint로 이 저장소를
+# 연결하면 자동 적용됩니다. 이미 만든 서비스가 있다면 Settings → Disks에서
+# 수동으로 추가해도 됩니다: Mount Path = /app/data, Size = 1GB)
+services:
+  - type: web
+    name: ktx-alert
+    runtime: docker
+    plan: free
+    disk:
+      name: ktx-alert-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: POLL_INTERVAL_SECONDS
+        value: "40"
